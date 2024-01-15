@@ -1,0 +1,33 @@
+name: Test
+on: [push, pull_request]
+jobs:
+  build: # https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: # https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+        go-version: [ '1.18', '1.19', '1.20', '1.21.x' ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+      - uses: szenius/set-timezone@v1.2
+        with:
+          timezoneLinux: "Asia/Shanghai"
+          timezoneMacos: "Asia/Shanghai"
+          timezoneWindows: "China Standard Time"
+      - name: Display Go Version
+        run: go version
+      - name: Run Test
+        run: |
+          mkdir -p output
+          go test -race  -gcflags all=-l -coverprofile=output/coverage.out ./... -coverpkg=./...
+          go tool cover -html=output/coverage.out -o output/coverage.html
+          go run example/main.go || echo $?
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with: # https://github.com/codecov/codecov-action
+          directory: ./output
