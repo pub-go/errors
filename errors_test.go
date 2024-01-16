@@ -2,6 +2,7 @@ package errors_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"code.gopub.tech/errors"
@@ -29,9 +30,30 @@ func TestErrorf(t *testing.T) {
 	print(t, err)
 	err = errors.Errorf("wrap1: %w", errLeafNew)
 	print(t, err)
-	// call has more than one error-wrapping directive %w
-	// err = errors.Errorf("wrap2: %w, %w", errLeafNew, errFmt)
-	// print(t, err)
+	err = errors.Errorf("wrap2: %w, %w", errLeafNew, errFmt)
+	print(t, err)
+	print(t, errors.Formattable(newJoin(errFmt, errLeafNew)))
+}
+
+type onlyJoin struct {
+	errs []error
+}
+
+func newJoin(errs ...error) error {
+	return &onlyJoin{errs: errs}
+}
+func (e *onlyJoin) Error() string {
+	var sb strings.Builder
+	for i, err := range e.errs {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(err.Error())
+	}
+	return sb.String()
+}
+func (e *onlyJoin) Unwrap() []error {
+	return e.errs
 }
 
 func TestCause(t *testing.T) {
@@ -49,7 +71,7 @@ func TestCause(t *testing.T) {
 	// Errorf: withStack{fmt.Errorf, stack}
 	// fmt.Errorf: fmt.wrapError
 	typ = fmt.Sprintf("%T", c)
-	if typ != "*fmt.wrapError" {
+	if typ != "*errors.withNewMessage" {
 		t.Errorf("Unwrap failed: %v", typ)
 	}
 	c = errors.Unwrap(c)
@@ -66,8 +88,10 @@ func TestWithMessage(t *testing.T) {
 	print(t, errors.WithMessage(errFmt, "prefix"))
 	print(t, errors.WithMessage(errLeafNew, "prefix"))
 	print(t, errors.WithMessagef(errLeafNew, "a=%d", 1))
-	// print(t, errors.WithMessage(fmt.Errorf("a: %w, b: %w", errFmt, errFmt), "prefix"))
+	print(t, errors.WithMessage(fmt.Errorf(s("a: %w, b: %w"), errFmt, errFmt), "prefix"))
 }
+
+func s(s string) string { return s }
 
 func TestWithSecondary(t *testing.T) {
 	print(t, errors.WithSecondary(errors.Errorf("mainErr"), errFmt))
@@ -80,9 +104,8 @@ func TestWrap(t *testing.T) {
 
 func TestWrapf(t *testing.T) {
 	print(t, errors.Wrapf(errFmt, "prefix: %v", errLeafNew))
-	// build failed:
-	// code.gopub.tech/errors.Wrapf does not support error-wrapping directive %w
-	// print(t, errors.Wrapf(errFmt, "leaf: %w", errLeafNew))
+	print(t, errors.Wrapf(errFmt, s("leaf: %w"), errLeafNew))
+	print(t, errors.Wrapf(errFmt, "a=%v, b=%v", errLeafNew, errFmt))
 }
 
 func TestWithStack(t *testing.T) {

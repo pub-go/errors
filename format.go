@@ -11,10 +11,11 @@ import (
 	"code.gopub.tech/errors/pretty"
 )
 
-var (
-	detailSep = []byte("\n  | ")
-	ptrType   = reflect.TypeOf(uintptr(0))
-)
+// F is alias of Formattable
+// 将一个错误包装为 fmt.Formatter
+func F(err error) FormattableError {
+	return Formattable(err)
+}
 
 // Formattable 将一个错误包装为 fmt.Formatter
 // 标准库中的 wrapErrors, joinerrors 并没有实现 fmt.Formatter 接口
@@ -34,9 +35,9 @@ func Formattable(err error) FormattableError {
 // 调用它的 FormatError 方法。
 //
 // 否则，如果错误类型是一个包装类型（实现了 Cause/Unwrap）
-// FormatError 会输出包装错误的 prefix 信息，并递归地处理其内部错误。
+// FormatError 会输出包装错误的附加信息，并递归地处理其内部错误。
 //
-// 其他情况，打印 Error() 文本。
+// 其他情况，直接打印 Error() 文本。
 func FormatError(err error, s fmt.State, verb rune) {
 	p := state{State: s}
 	switch {
@@ -102,17 +103,19 @@ func (s *state) formatEntries(err error) {
 	// <完整错误链信息>
 	// (1) <错误详情>
 	s.formatSingleLineOutput()
-	s.finalBuf.WriteString("\n(1)")
 
-	s.printEntry(s.entries[len(s.entries)-1])
+	entry := s.entries[len(s.entries)-1]
+	s.finalBuf.WriteString("\n(1)")
+	s.printEntry(entry)
 
 	// 然后输出包装错误信息
 	// Wraps: (N) <错误详情>
 	for i, j := len(s.entries)-2, 2; i >= 0; i, j = i-1, j+1 {
-		s.finalBuf.WriteByte('\n')
+		entry := s.entries[i]
+		s.finalBuf.WriteString("\n")
 		// 缩进
-		for m := 0; m < s.entries[i].depth-1; m += 1 {
-			if m == s.entries[i].depth-2 {
+		for m := 0; m < entry.depth-1; m += 1 {
+			if m == entry.depth-2 {
 				s.finalBuf.WriteString("└─ ")
 			} else {
 				s.finalBuf.WriteByte(' ')
@@ -120,7 +123,6 @@ func (s *state) formatEntries(err error) {
 			}
 		}
 		fmt.Fprintf(&s.finalBuf, "Wraps: (%d)", j)
-		entry := s.entries[i]
 		s.printEntry(entry)
 	}
 
@@ -134,16 +136,16 @@ func (s *state) formatEntries(err error) {
 func (s *state) printEntry(entry formatEntry) {
 	if len(entry.head) > 0 {
 		if entry.head[0] != '\n' {
+			// 在 `Wraps: (N)` 之后加一个空格
 			s.finalBuf.WriteByte(' ')
 		}
-		if len(entry.head) > 0 {
-			s.finalBuf.Write([]byte(entry.head))
-		}
+		s.finalBuf.Write(entry.head)
 	}
 
 	if len(entry.details) > 0 {
-		if len(entry.head) == 0 {
+		if len(entry.head) == 0 { // 空格还没加
 			if entry.details[0] != '\n' {
+				// 在 `Wraps: (N)` 之后加一个空格
 				s.finalBuf.WriteByte(' ')
 			}
 		}
@@ -153,10 +155,10 @@ func (s *state) printEntry(entry formatEntry) {
 	if entry.stackTrace != nil {
 		s.finalBuf.WriteString("\n  -- stack trace:")
 		s.finalBuf.WriteString(strings.ReplaceAll(
-			StackDetail(entry.stackTrace),
-			"\n", string(detailSep)))
+			StackDetail(entry.stackTrace), "\n", detailSep))
 		if entry.elidedStackTrace {
-			fmt.Fprintf(&s.finalBuf, "%s[...repeated from below...]", detailSep)
+			fmt.Fprintf(&s.finalBuf,
+				"%s[...repeated from below...]", detailSep)
 		}
 	}
 }
@@ -217,6 +219,11 @@ func (s *state) formatRecursive(
 		}
 
 	case fmt.Formatter:
+		// 使用 fmt.Formatter 接口有两个条件
+		// - 当前 error 是叶子节点，
+		//   因为 fmt.Formatter 在包装类型上会递归
+		// - 当前不是最外层错误，因为外层错误的 Format 方法
+		//   一般会转发到 FormatError 会再调过来此处，导致爆栈
 		if !isOutermost && cause == nil {
 			// 触发错误的格式化输出 会调用到 state 重写的 Write 方法
 			v.Format(s, 'v') // 在 Write 中会改变 state 的一些状态
@@ -334,7 +341,7 @@ type state struct {
 	headBuf []byte
 
 	// 记录最近一次的堆栈
-	lastStack StackTrace
+	lastStack []uintptr
 
 	// 记录是否有详情，当调用了 p.Detail() 后置为 true
 	// 用于 formatEntry 时决定如何使用 buf/headBuf
@@ -360,12 +367,19 @@ type formatEntry struct {
 	// 是否需要在输出时省略 head 内容
 	elideShort bool
 	// 堆栈
-	stackTrace StackTrace
+	stackTrace []uintptr
 	// 堆栈是否和其他 entry 有重复
 	elidedStackTrace bool
 	// 如果 wrap 了多个错误会用到
 	depth int
 }
+
+// String is used for debugging only.
+func (e formatEntry) String() string {
+	return fmt.Sprintf("entry{%d, %T, %q, %q}", e.depth, e.err, e.head, e.details)
+}
+
+const detailSep = "\n  | "
 
 // Write implements fmt.State.
 // 重写 Write 方法：错误链中的错误执行 Format 方法时，
@@ -378,7 +392,7 @@ func (s *state) Write(b []byte) (n int, err error) {
 
 	sep := detailSep // "\n  | "
 	if !s.wantDetail {
-		sep = []byte("\n")
+		sep = "\n"
 	}
 
 	for i, c := range b {
@@ -396,9 +410,9 @@ func (s *state) Write(b []byte) (n int, err error) {
 			if s.needNewline > 0 && s.notEmpty {
 				// 输出换行
 				for i := 0; i < s.needNewline-1; i++ {
-					s.buf.Write(detailSep[:len(sep)-1])
+					s.buf.WriteString(detailSep[:len(sep)-1])
 				}
-				s.buf.Write(sep)
+				s.buf.WriteString(sep)
 				s.needNewline = 0
 			}
 			s.notEmpty = true
@@ -452,14 +466,6 @@ func (s *printer) enhanceArgs(args []interface{}) {
 	prevStack := s.lastStack
 	lastSeen := prevStack
 	for i := range args {
-		/*
-			if st, ok := GetStackTrace(args[i]); ok {
-				//stackTrace, _ := ElideSharedStackTraceSuffix(prevStack, st)
-				//_ = stackTrace
-				// args[i] = StackDetail(stackTrace)
-				lastSeen = st
-			}
-		*/
 		if err, ok := args[i].(error); ok {
 			args[i] = &errorFormatter{err}
 		}
@@ -468,7 +474,7 @@ func (s *printer) enhanceArgs(args []interface{}) {
 }
 
 // ElideSharedStackTraceSuffix 省略共同的堆栈
-func ElideSharedStackTraceSuffix(prevStack, newStack StackTrace) (StackTrace, bool) {
+func ElideSharedStackTraceSuffix(prevStack, newStack []uintptr) ([]uintptr, bool) {
 	if len(prevStack) == 0 {
 		return newStack, false
 	}
