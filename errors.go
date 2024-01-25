@@ -1,20 +1,25 @@
 package errors
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // New 新建一个错误实例，带堆栈
 func New(msg string) error {
 	return &withStack{
-		error: &leafError{msg: msg},
+		error: errors.New(msg),
 		stack: callers(),
 	}
 }
 
 // Errorf 按指定格式新建一个错误实例，带堆栈
 func Errorf(format string, args ...any) error {
+	// 先使用内置 fmt.Errorf 创建错误
 	fmtErr := fmt.Errorf(formatPlusW(format), args...)
 
-	var wrapedErr error //  %w 对应的参数
+	var wrapedErr error // 如果当前 Go 版本支持 %w 记录一下
 	if we, ok := fmtErr.(interface{ Unwrap() error }); ok {
 		wrapedErr = we.Unwrap() // 只包装了一个
 	}
@@ -38,16 +43,34 @@ func Errorf(format string, args ...any) error {
 	}
 
 	var err error
+	errMsg := fmtErr.Error()
 	if hasWrap { // 通过 %w 包装了
-		err = &withNewMessage{
-			cause:   wrapedErr,
-			message: fmtErr.Error(),
+		causeMsg := wrapedErr.Error()
+		if strings.HasSuffix(errMsg, causeMsg) {
+			// 如果仅仅是添加了前缀 就使用 withPrefix
+			// 这样在 %+v 格式输出时，就不会重复输出 causeMsg
+			// prefix: %w
+			// prefix: %w\n%w
+			prefix := errMsg[:len(errMsg)-len(causeMsg)]
+			prefix = strings.TrimSuffix(prefix, ": ")
+			err = &withPrefix{
+				error:  wrapedErr,
+				string: prefix,
+			}
+		} else {
+			// 如果 err 和 cause 不是添加前缀的关系
+			// 在输出详细模式时，两者都会输出
+			// prefix: %w, %w
+			err = &withNewMessage{
+				cause:   wrapedErr,      // %w\n%w
+				message: fmtErr.Error(), // prefix: %w, %w
+			}
 		}
 	} else { // 没有包装任何错误
-		err = &leafError{msg: fmtErr.Error()}
+		err = errors.New(errMsg)
 	}
 
-	if len(errRefs) > 0 { // 没被 wrap 的错误当做次要错误
+	if len(errRefs) > 0 { // 没被 wrap 的错误当做次要错误记录一下
 		err = WithSecondary(err, join(errRefs...))
 	}
 
@@ -59,6 +82,7 @@ func Errorf(format string, args ...any) error {
 
 // formatPlusW 1.20 之前不能使用多个 %w 参数 会编译失败
 // 所以这里用函数转一下，规避编译失败问题，运行时会打印 %!w(%T=%v)
+//
 // call has more than one error-wrapping directive %w
 func formatPlusW(s string) string { return s }
 
@@ -125,6 +149,7 @@ func Wrapf(err error, format string, args ...any) error {
 		}
 	}
 	if format != "" || len(args) > 0 {
+		format = strings.ReplaceAll(format, "%w", "%v")
 		err = WithMessagef(err, format, args...)
 	}
 

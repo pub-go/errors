@@ -37,7 +37,7 @@ var ptrType = reflect.TypeOf(uintptr(0))
 
 // GetStackTrace 获取错误上附加的堆栈
 // 兼容 pkg/errors, cockroachdb/errors (通过反射)
-func GetStackTrace(err any) (st []uintptr, ok bool) {
+func GetStackTrace(err error) (st []uintptr, ok bool) {
 	if se, ok := err.(stackTraceProvider); ok {
 		f := se.StackTrace() // 本项目的 stack 直接调用 不用反射
 		return f, true
@@ -93,7 +93,7 @@ func StackDetail(st []uintptr) string {
 }
 
 var _ error = (*withStack)(nil)
-var _ Formatter = (*withStack)(nil)
+var _ ErrorPrinter = (*withStack)(nil)
 var _ fmt.Formatter = (*withStack)(nil)
 
 type withStack struct {
@@ -108,9 +108,7 @@ func (e *withStack) Format(s fmt.State, verb rune) {
 	FormatError(e, s, verb)
 }
 
-func (e *withStack) FormatError(p Printer) (next error) {
-	if p.Detail() {
-		p.Printf("attached stack trace")
-	}
+func (e *withStack) PrintError(p Printer) (next error) {
+	p.PrintDetail("attached stack trace")
 	return e.error
 }

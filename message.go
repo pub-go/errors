@@ -3,12 +3,16 @@ package errors
 import "fmt"
 
 var _ error = (*withPrefix)(nil)
-var _ Formatter = (*withPrefix)(nil)
+var _ ErrorPrinter = (*withPrefix)(nil)
 var _ fmt.Formatter = (*withPrefix)(nil)
 
 type withPrefix struct {
 	error
 	string
+}
+
+func (e *withPrefix) Error() string {
+	return fmt.Sprintf("%s: %s", e.string, e.error)
 }
 
 func (e *withPrefix) Cause() error  { return e.error }
@@ -19,14 +23,14 @@ func (e *withPrefix) Format(f fmt.State, verb rune) {
 	FormatError(e, f, verb)
 }
 
-// FormatError implements Formatter.
-func (e *withPrefix) FormatError(p Printer) (next error) {
+// PrintError implements Formatter.
+func (e *withPrefix) PrintError(p Printer) (next error) {
 	p.Print(e.string)
 	return e.error
 }
 
 var _ error = (*withNewMessage)(nil)
-var _ Formatter = (*withNewMessage)(nil)
+var _ ErrorPrinter = (*withNewMessage)(nil)
 var _ fmt.Formatter = (*withNewMessage)(nil)
 
 type withNewMessage struct {
@@ -43,8 +47,8 @@ func (e *withNewMessage) Format(f fmt.State, verb rune) {
 	FormatError(e, f, verb)
 }
 
-// FormatError implements Formatter.
-func (e *withNewMessage) FormatError(p Printer) (next error) {
+// PrintError implements Formatter.
+func (e *withNewMessage) PrintError(p Printer) (next error) {
 	p.Print(e.message)
 	return nil
 }

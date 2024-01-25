@@ -1,10 +1,7 @@
 package errors
 
-import "fmt"
-
+// 因为 joinError 总是被其他类型包装，所以可以不必实现 Formatter
 var _ error = (*joinError)(nil)
-var _ Formatter = (*joinError)(nil)
-var _ fmt.Formatter = (*joinError)(nil)
 
 type joinError struct {
 	errs []error
@@ -13,19 +10,12 @@ type joinError struct {
 func (e *joinError) Unwrap() []error { return e.errs }
 
 func (e *joinError) Error() string {
-	return fmt.Sprint(e)
-}
-
-func (e *joinError) Format(s fmt.State, verb rune) {
-	FormatError(e, s, verb)
-}
-
-func (e *joinError) FormatError(p Printer) error {
+	var b []byte
 	for i, err := range e.errs {
 		if i > 0 {
-			p.Print("\n")
+			b = append(b, '\n')
 		}
-		p.Print(err)
+		b = append(b, err.Error()...)
 	}
-	return nil
+	return string(b)
 }
