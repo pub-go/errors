@@ -43,16 +43,10 @@ func FormatError(err error, s fmt.State, verb rune) {
 	switch {
 	case verb == 'v' && s.Flag('+') && !s.Flag('#'):
 		// 用 %+v 格式将每个错误输出到 p.buf
-		// 通过递归，得到从最内层错误开始的错误链
-		p.formatRecursive(
-			err,
-			true,  // isOutermost
-			true,  // withDetail
-			false, // withDepth
-			0,     // depth
-		)
-		// 将错误链中每一项错误输出
-		p.formatEntries(err)
+		// 使用递归解析得到错误树
+		p.entry = p.buildTree(err, true)
+		// 将错误树输出
+		p.formatTree(err)
 		// 得到了输出字符串，再看是否有宽度精度这些要求
 		p.finishDisplay(verb)
 
@@ -69,15 +63,9 @@ func FormatError(err error, s fmt.State, verb rune) {
 		(verb == 'v' && !s.Flag('#')) ||
 		(verb == 'x' || verb == 'X' || verb == 'q'):
 		// 不需要详情
-		p.formatRecursive(
-			err,
-			true,  // isOutermost
-			false, // withDetail
-			false, // withDepth
-			0,     // depth
-		)
+		p.entry = p.buildTree(err, false)
 		// 输出一行即可
-		p.formatSingleLineOutput()
+		p.printErrorString()
 		// 再处理 %q %x 这种要求
 		p.finishDisplay(verb)
 
@@ -97,212 +85,75 @@ func FormatError(err error, s fmt.State, verb rune) {
 	}
 }
 
-func (s *state) formatEntries(err error) {
-	// 先输出
-	//
-	// <完整错误链信息>
-	// (1) <错误详情>
-	s.formatSingleLineOutput()
-
-	entry := s.entries[len(s.entries)-1]
-	s.finalBuf.WriteString("\n(1)")
-	s.printEntry(entry)
-
-	// 然后输出包装错误信息
-	// Wraps: (N) <错误详情>
-	for i, j := len(s.entries)-2, 2; i >= 0; i, j = i-1, j+1 {
-		entry := s.entries[i]
-		s.finalBuf.WriteString("\n")
-		// 缩进
-		for m := 0; m < entry.depth-1; m += 1 {
-			if m == entry.depth-2 {
-				s.finalBuf.WriteString("└─ ")
-			} else {
-				s.finalBuf.WriteByte(' ')
-				s.finalBuf.WriteByte(' ')
-			}
-		}
-		fmt.Fprintf(&s.finalBuf, "Wraps: (%d)", j)
-		s.printEntry(entry)
-	}
-
-	// 最后输出错误类型
-	s.finalBuf.WriteString("\nError types:")
-	for i, j := len(s.entries)-1, 1; i >= 0; i, j = i-1, j+1 {
-		fmt.Fprintf(&s.finalBuf, " (%d) %T", j, s.entries[i].err)
-	}
-}
-
-func (s *state) printEntry(entry formatEntry) {
-	if len(entry.head) > 0 {
-		if entry.head[0] != '\n' {
-			// 在 `Wraps: (N)` 之后加一个空格
-			s.finalBuf.WriteByte(' ')
-		}
-		s.finalBuf.Write(entry.head)
-	}
-
-	if len(entry.details) > 0 {
-		if len(entry.head) == 0 { // 空格还没加
-			if entry.details[0] != '\n' {
-				// 在 `Wraps: (N)` 之后加一个空格
-				s.finalBuf.WriteByte(' ')
-			}
-		}
-		s.finalBuf.Write(entry.details)
-	}
-
-	if entry.stackTrace != nil {
-		s.finalBuf.WriteString("\n  -- stack trace:")
-		s.finalBuf.WriteString(strings.ReplaceAll(
-			StackDetail(entry.stackTrace), "\n", detailSep))
-		if entry.elidedStackTrace {
-			fmt.Fprintf(&s.finalBuf,
-				"%s[...repeated from below...]", detailSep)
-		}
-	}
-}
-
-func (s *state) formatSingleLineOutput() {
-	// 第一个是 root cause 最后一个是最外层的 wrap error
-	for i := len(s.entries) - 1; i >= 0; i-- {
-		entry := &s.entries[i]
-		if entry.elideShort {
-			continue
-		}
-		if s.finalBuf.Len() > 0 && len(entry.head) > 0 {
-			s.finalBuf.WriteString(": ")
-		}
-		if len(entry.head) > 0 {
-			s.finalBuf.Write([]byte(entry.head))
-		}
-	}
-}
-
-// formatRecursive 对错误递归 Unwrap 处理 得到错误链。
-// `withDepth` 和 `depth` 用于标记 multi-cause 错误的子树，
-// 以便在输出时能够添加适当的缩进；
-// 遇到多错误的实例时, withDepth 就会设置为 true.
-func (s *state) formatRecursive(
-	err error,
-	isOutermost,
-	withDetail bool,
-	withDepth bool,
-	depth int,
-) int {
-	cause := UnwrapOnce(err)
-	numChildren := 0
-	if cause != nil { // 立即开始递归
-		// isOutermost 传 false 不是最外层了
-		numChildren += s.formatRecursive(cause, false, withDetail, withDepth, depth+1)
-	}
-	causes := UnwrapMulti(err)
-	for _, c := range causes {
-		numChildren += s.formatRecursive(c, false, withDetail, true, depth+1)
-	}
-
+// buildTree 通过 `Unwrap()error` / `Unwrap()[]error` 递归构造错误树
+func (s *state) buildTree(err error, withDetail bool) *formatEntry {
 	// 每一轮递归 初始化
-	s.wantDetail = withDetail
-	s.needNewline = 0
-	s.notEmpty = false
-	s.hasDetail = false
-	s.headBuf = nil
+	s.simpleBuf = bytes.Buffer{}
+	s.detailBuf = bytes.Buffer{}
 
-	seenTrace := false
-
+	// 包装单个错误时: `prefix: cause`,
+	// 包装错误的 simple 缓冲区是 `prefix`，
+	// 不能省略 cause 的 simple 输出
+	// 包装多个错误时: `cause1\ncause2`,
+	// 包装错误的 simple 缓冲区是 `cause1\ncause2`，
+	// 应该省略 cause 的 simple 输出
+	var ignoreCause bool
 	switch v := err.(type) {
-	case Formatter: // 本项目的错误都实现了这个接口
-		// 也实现了 fmt.Formatter 接口，但其实现就是调用本方法
-		// 所以需要先处理 Formatter 以免发生无限递归
-		if desiredShortening := v.FormatError((*printer)(s)); desiredShortening == nil {
-			s.elideShortChildren(numChildren)
-		}
-
-	case fmt.Formatter:
-		// 使用 fmt.Formatter 接口有两个条件
-		// - 当前 error 是叶子节点，
-		//   因为 fmt.Formatter 在包装类型上会递归
-		// - 当前不是最外层错误，因为外层错误的 Format 方法
-		//   一般会转发到 FormatError 会再调过来此处，导致爆栈
-		if !isOutermost && cause == nil {
-			// 触发错误的格式化输出 会调用到 state 重写的 Write 方法
-			v.Format(s, 'v') // 在 Write 中会改变 state 的一些状态
-			if st, ok := GetStackTrace(err); ok {
-				seenTrace = true
-				s.lastStack = st
-			}
-		} else {
-			if elideCauseMsg := s.formatSimple(err, cause); elideCauseMsg {
-				s.elideShortChildren(numChildren)
-			}
+	case ErrorPrinter:
+		if e := v.PrintError((*printer)(s)); e == nil {
+			// 返回的 next error 为 nil 代表需要忽略 cause
+			ignoreCause = true
 		}
 	default:
-		elideChildren := s.formatSimple(err, cause)
-		if len(causes) > 0 {
-			// 如果是 multi-cause 错误，总是设为 true
-			elideChildren = true
-		}
-		if elideChildren {
-			s.elideShortChildren(numChildren)
-		}
+		ignoreCause = s.formatDirect(err)
 	}
 
-	entry := s.collectEntry(err, withDepth, depth)
-
-	if !seenTrace {
-		if st, ok := GetStackTrace(err); ok {
-			entry.stackTrace, entry.elidedStackTrace = ElideSharedStackTraceSuffix(s.lastStack, st)
-			s.lastStack = entry.stackTrace
-		}
+	entry := s.buildEntry(err)
+	entry.ignoreCause = ignoreCause
+	if st, ok := GetStackTrace(err); ok {
+		entry.stackTrace = st
 	}
 
-	s.entries = append(s.entries, entry)
-	s.buf = bytes.Buffer{}
-
-	return numChildren + 1
-}
-
-func (s *state) elideShortChildren(newEntries int) {
-	for i := 0; i < newEntries; i++ {
-		s.entries[len(s.entries)-1-i].elideShort = true
+	if cause := UnwrapOnce(err); cause != nil {
+		child := s.buildTree(cause, withDetail)
+		child.parent = entry
+		entry.wraps = append(entry.wraps, child)
 	}
-}
 
-func (s *state) collectEntry(err error, withDepth bool, depth int) formatEntry {
-	entry := formatEntry{err: err}
-
-	if s.wantDetail {
-		// The buffer has been populated as a result of formatting with
-		// %+v. In that case, if the printer has separated detail
-		// from non-detail, we can use the split.
-		if s.hasDetail {
-			entry.head = s.headBuf
-			entry.details = s.buf.Bytes()
-		} else {
-			entry.head = s.buf.Bytes()
-		}
-	} else {
-		entry.head = s.headBuf
-		if len(entry.head) > 0 && entry.head[len(entry.head)-1] != '\n' &&
-			s.buf.Len() > 0 && s.buf.Bytes()[0] != '\n' {
-			entry.head = append(entry.head, '\n')
-		}
-		entry.head = append(entry.head, s.buf.Bytes()...)
+	var (
+		causes = UnwrapMulti(err)
+		count  = len(causes)
+		wraps  []*formatEntry
+	)
+	for i := count - 1; i >= 0; i-- { // 倒序进递归方法里
+		// 为了输出时 上面的堆栈可以省略 下面的堆栈更完整
+		child := s.buildTree(causes[i], withDetail)
+		child.parent = entry
+		wraps = append(wraps, child)
 	}
-	if withDepth {
-		entry.depth = depth
+	for i := count - 1; i >= 0; i-- { // 再倒序把顺序正过来
+		// 输出时直接按顺序从上往下
+		entry.wraps = append(entry.wraps, wraps[i])
+	}
+
+	if len(entry.stackTrace) > 0 { // 重复堆栈优化输出
+		last := entry.stackTrace
+		if nst, ok := ElideSharedStackTraceSuffix(s.lastStack, entry.stackTrace); ok {
+			entry.stackTrace = nst
+			entry.elidedStackTrace = true
+		}
+		s.lastStack = last
 	}
 	return entry
 }
 
-func (s *state) formatSimple(err, cause error) bool {
+// formatDirect 直接比较 Error() 字符串看是否有相同后缀
+func (s *state) formatDirect(err error) (ignoreCause bool) {
 	var pref string
-	elideCauses := false
-	if cause != nil {
-		var messageType MessageType
-		pref, messageType = extractPrefix(err, cause)
-		if messageType == FullMessage {
-			elideCauses = true
+	if cause := UnwrapOnce(err); cause != nil {
+		var isPrefix bool
+		if pref, isPrefix = extractPrefix(err, cause); !isPrefix {
+			ignoreCause = true
 		}
 	} else {
 		pref = err.Error()
@@ -310,9 +161,207 @@ func (s *state) formatSimple(err, cause error) bool {
 	if len(pref) > 0 {
 		s.Write([]byte(pref))
 	}
-	return elideCauses
+	if causes := UnwrapMulti(err); len(causes) > 0 {
+		// 如果包装了多个错误，则总是认为需要省略子错误
+		// 直接使用包装错误即可
+		ignoreCause = true
+	}
+	return
 }
 
+// extractPrefix 如果 err 的错误信息，以 cause 的错误信息为后缀
+// 就将 err 中独有的前缀提取出来。
+//
+// 示例
+//
+//	err=`prefix: cause`
+//	cause=`cause`
+//	return=`prefix`, true
+func extractPrefix(err, cause error) (msg string, isPrefix bool) {
+	causeSuffix := cause.Error()
+	errMsg := err.Error()
+	if strings.HasSuffix(errMsg, causeSuffix) {
+		prefix := errMsg[:len(errMsg)-len(causeSuffix)]
+		if len(prefix) == 0 {
+			return "", true
+		}
+		if strings.HasSuffix(prefix, ": ") {
+			return prefix[:len(prefix)-2], true
+		}
+	}
+	return errMsg, false
+}
+
+// buildEntry 收集简单消息、详细消息
+func (s *state) buildEntry(err error) *formatEntry {
+	entry := &formatEntry{err: err}
+	entry.simple = s.simpleBuf.Bytes()
+	entry.detail = s.detailBuf.Bytes()
+	return entry
+}
+
+// formatTree 遍历错误树，格式化为树形
+func (s *state) formatTree(err error) {
+	s.printErrorString()
+	var errType = map[int]string{}
+	s.print(0, s.entry, " │ ", errType)
+	s.finalBuf.WriteString("\nError types:")
+	count := len(errType)
+	for i := 1; i <= count; i++ {
+		fmt.Fprintf(&s.finalBuf, " (%d) %s", i, errType[i])
+	}
+}
+
+// printErrorString 输出简单模型的错误信息
+// 这里不直接使用 `err.Error()` 是因为，包装错误的 `Error()`
+// 通常会实现为 `return fmt.Sprint(err)` 从而调用到
+// `Format` 中的 `FormatError` 会触发递归。
+func (s *state) printErrorString() {
+	entry := s.entry
+	for entry != nil {
+		if s.finalBuf.Len() > 0 && len(entry.simple) > 0 {
+			s.finalBuf.WriteString(": ")
+		}
+		if len(entry.simple) > 0 {
+			s.finalBuf.Write(entry.simple)
+		}
+		if entry.ignoreCause {
+			break
+		}
+		if len(entry.wraps) == 1 {
+			entry = entry.wraps[0]
+		} else {
+			break
+		}
+	}
+}
+
+// print 格式化输出每个错误节点
+func (s *state) print(depth int, entry *formatEntry, prefix string, errType map[int]string) {
+	index := len(errType) + 1 // 计数
+	errType[index] = fmt.Sprintf("%T", entry.err)
+
+	if index == 1 { // 第一个特殊处理 不需要竖线开头
+		fmt.Fprintf(&s.finalBuf, "\n(1)")
+	} else {
+		// entry.parent != nil must be true
+		if len(entry.parent.wraps) > 1 { // 父错误包装了多个错误
+			// 先往下看 包装多个错误时 递归调用本方法时 增加了缩进
+
+			count := len(entry.parent.wraps)
+			if entry.parent.wraps[count-1] == entry { // 现在是多个 cause 中的最后一个
+				// `Next:`
+				// ` │  │ Wraps:`
+				// 改为
+				// `Next:`
+				// ` └─ Wraps:`
+				fmt.Fprintf(&s.finalBuf, "\n%s Wraps: (%d)",
+					prefix[:len(prefix)-len(" │  │ ")]+" └─", index)
+				// 如果是最后一个节点
+				// ` └─ Wraps: xxx`
+				// ` │  │ xxx`
+				// 前一条竖线就没必要再输出了
+				// ` └─ Wraps: xx`
+				// `    │ xxx`
+				prefix = prefix[:len(prefix)-len(" │  │ ")] + "    │ "
+			} else {
+				// `Next:`
+				// ` │  │ Wraps:`
+				// 改为
+				// `Next:`
+				// ` ├─ Wraps:`
+				fmt.Fprintf(&s.finalBuf, "\n%s Wraps: (%d)",
+					prefix[:len(prefix)-len(" │  │ ")]+" ├─", index)
+			}
+		} else { // 父错误仅有一个 cause
+			// ` | `
+			// ` | Next:`
+			// 改为
+			// ` | `
+			// `Next:` 减少一点缩进
+			fmt.Fprintf(&s.finalBuf, "\n%sNext: (%d)", prefix[:len(prefix)-len(" │ ")], index)
+		}
+	}
+
+	s.printOne(prefix, entry)
+
+	childCount := len(entry.wraps)
+	switch childCount {
+	case 0:
+		return
+	case 1:
+		entry = entry.wraps[0] // 包装单个错误 无需新增缩进
+		s.print(depth, entry, prefix, errType)
+	default:
+		for _, entry := range entry.wraps {
+			// 包装多个错误 添加缩进
+			s.print(depth+1, entry, prefix+" │ ", errType)
+		}
+	}
+}
+
+// printOne 输出错误详细内容
+func (s *state) printOne(prefix string, entry *formatEntry) {
+	var sb strings.Builder // 先往缓冲区输出
+
+	if len(entry.simple) > 0 {
+		if entry.simple[0] != '\n' {
+			// 在 `Wraps: (N)` 之后加一个空格
+			sb.WriteByte(' ')
+		}
+		sb.Write(entry.simple)
+	}
+	if len(entry.detail) > 0 {
+		if len(entry.simple) == 0 { // 空格还没加
+			if entry.detail[0] != '\n' {
+				// 在 `Wraps: (N)` 之后加一个空格
+				sb.WriteByte(' ')
+			}
+		}
+		sb.Write(entry.detail)
+	}
+	if entry.stackTrace != nil {
+		sb.WriteString("\n-- stack trace:")
+		sb.WriteString(StackDetail(entry.stackTrace))
+		if entry.elidedStackTrace {
+			sb.WriteString("\n[...repeated from below...]")
+		}
+	}
+
+	// 替换换行符号后再实际输出
+	str := replacePrefix(sb.String(), prefix, len(entry.wraps) == 0)
+	s.finalBuf.WriteString(str)
+}
+
+// replacePrefix 将内容中的换行符号替换为竖线前缀
+func replacePrefix(origin string, linePrefix string, isLeaf bool) string {
+	if isLeaf {
+		i := strings.LastIndex(origin, "\n")
+		if i >= 0 {
+			// │ │  │
+			// │ │ Next: (8) goErr
+			// │ │  │ with
+			// │ │  │ new line
+			// replace to
+			// │ │  │
+			// │ │ Next: (8) goErr
+			// │ │  │  with      加一个空格
+			// │ │  └─ new line¸ 加一个拐角
+			linePrefix = linePrefix[:len(linePrefix)-len("│ ")]
+			lastPrefix := linePrefix + "└─ "
+			linePrefix = linePrefix + "│  "
+			origin = strings.ReplaceAll(
+				origin[:i], "\n", "\n"+linePrefix) + // 中间的换行
+				"\n" + lastPrefix + origin[i+1:] // 最后一个换行
+		}
+		return origin
+	} else {
+		return strings.ReplaceAll(origin, "\n", "\n"+linePrefix)
+	}
+}
+
+// finishDisplay 将 finalBuf 输出到 fmt.State
+// 如果有 %q, %x, %X, 宽度, 精度等要求 在这里实现
 func (p *state) finishDisplay(verb rune) {
 	width, okW := p.Width()
 	_, okP := p.Precision()
@@ -331,55 +380,40 @@ type state struct {
 	fmt.State
 	// 这个缓冲区是最终输出，会在最后时刻写入 fmt.State
 	finalBuf bytes.Buffer
-	// 错误链
-	entries []formatEntry
-	// 递归收集错误链详情时使用的缓冲区
-	buf bytes.Buffer
-	// 当一个错误在 FormatError 中调用了 p.Detail() 时
-	// 当前 buf 的内容就会拷贝到 headBuf 中，
-	// 同时重新初始化一个 buf
-	headBuf []byte
-
+	// 错误树
+	entry *formatEntry
 	// 记录最近一次的堆栈
 	lastStack []uintptr
 
-	// 记录是否有详情，当调用了 p.Detail() 后置为 true
-	// 用于 formatEntry 时决定如何使用 buf/headBuf
-	hasDetail bool
-	// 当使用 %+v 输出时，表示希望输出详情；
-	// 其他情况都是 false, 此时调用 p.Detail() 将得到 false.
-	wantDetail bool
+	// 下面的字段会在每轮递归时初始化
 
-	// 记录错误输出时 是否已经输出了字符
-	// 用于记录换行时是否需要添加竖线/缩进
-	notEmpty bool
-	// 错误输出时 遇到换行时会插入竖线分隔符
-	// 几个换行就需要插入多个分隔符
-	needNewline int
+	// 错误信息默认输出到这个缓冲区
+	simpleBuf bytes.Buffer
+	// 错误详情输出到这个缓冲区
+	detailBuf bytes.Buffer
 }
 
 type formatEntry struct {
 	err error
 	// 简单模式输出时的内容
-	head []byte
+	simple []byte
 	// 错误详情内容
-	details []byte
-	// 是否需要在输出时省略 head 内容
-	elideShort bool
+	detail []byte
+	// 在拼接整体简单消息时 输出完自己的 simple 后就结束，忽略 cause 的
+	ignoreCause bool
 	// 堆栈
 	stackTrace []uintptr
 	// 堆栈是否和其他 entry 有重复
 	elidedStackTrace bool
-	// 如果 wrap 了多个错误会用到
-	depth int
+	// 树形
+	parent *formatEntry
+	wraps  []*formatEntry
 }
 
 // String is used for debugging only.
 func (e formatEntry) String() string {
-	return fmt.Sprintf("entry{%d, %T, %q, %q}", e.depth, e.err, e.head, e.details)
+	return fmt.Sprintf("entry{%T,%v, %q, %q}", e.err, e.elidedStackTrace, e.simple, e.detail)
 }
-
-const detailSep = "\n  | "
 
 // Write implements fmt.State.
 // 重写 Write 方法：错误链中的错误执行 Format 方法时，
@@ -388,89 +422,41 @@ func (s *state) Write(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	k := 0
-
-	sep := detailSep // "\n  | "
-	if !s.wantDetail {
-		sep = "\n"
-	}
-
-	for i, c := range b {
-		if c == '\n' {
-			// 遇到换行了，把之前的字符先输出到 buf 中
-			s.buf.Write(b[k:i])
-			// 不输出换行本身 在下一个字符到来时再处理(加上分隔符)
-			k = i + 1
-			// 如果是连续换行 需要记录一下个数
-			s.needNewline++
-			if s.wantDetail {
-				s.switchOver()
-			}
-		} else {
-			if s.needNewline > 0 && s.notEmpty {
-				// 输出换行
-				for i := 0; i < s.needNewline-1; i++ {
-					s.buf.WriteString(detailSep[:len(sep)-1])
-				}
-				s.buf.WriteString(sep)
-				s.needNewline = 0
-			}
-			s.notEmpty = true
-		}
-	}
-	s.buf.Write(b[k:])
-	return len(b), nil
-}
-
-func (p *state) detail() bool {
-	if !p.wantDetail {
-		return false
-	}
-	if p.notEmpty {
-		p.needNewline = 1
-	}
-	p.switchOver()
-	return true
-}
-
-func (p *state) switchOver() {
-	if p.hasDetail {
-		return
-	}
-	p.headBuf = p.buf.Bytes()
-	p.buf = bytes.Buffer{}
-	p.notEmpty = false
-	p.hasDetail = true
+	return s.simpleBuf.Write(b)
 }
 
 type printer state
 
-// Detail implements Printer.
-func (s *printer) Detail() bool {
-	return ((*state)(s)).detail()
-}
-
 // Print implements Printer.
 func (s *printer) Print(args ...any) {
 	s.enhanceArgs(args)
-	fmt.Fprint((*state)(s), args...)
+	fmt.Fprint(&s.simpleBuf, args...)
 }
 
 // Printf implements Printer.
 func (s *printer) Printf(format string, args ...any) {
 	s.enhanceArgs(args)
-	fmt.Fprintf((*state)(s), format, args...)
+	fmt.Fprintf(&s.simpleBuf, format, args...)
+}
+
+// PrintDetail implements Printer.
+func (s *printer) PrintDetail(args ...any) {
+	s.enhanceArgs(args)
+	fmt.Fprint(&s.detailBuf, args...)
+}
+
+// PrintDetailf implements Printer.
+func (s *printer) PrintDetailf(format string, args ...any) {
+	s.enhanceArgs(args)
+	fmt.Fprintf(&s.detailBuf, format, args...)
 }
 
 func (s *printer) enhanceArgs(args []interface{}) {
-	prevStack := s.lastStack
-	lastSeen := prevStack
 	for i := range args {
 		if err, ok := args[i].(error); ok {
 			args[i] = &errorFormatter{err}
 		}
 	}
-	s.lastStack = lastSeen
 }
 
 // ElideSharedStackTraceSuffix 省略共同的堆栈
@@ -492,26 +478,4 @@ func ElideSharedStackTraceSuffix(prevStack, newStack []uintptr) ([]uintptr, bool
 		i = 1 // Keep at least one entry.
 	}
 	return newStack[:i], i < len(newStack)-1
-}
-
-type MessageType int
-
-const (
-	Prefix MessageType = iota
-	FullMessage
-)
-
-func extractPrefix(err, cause error) (string, MessageType) {
-	causeSuffix := cause.Error()
-	errMsg := err.Error()
-	if strings.HasSuffix(errMsg, causeSuffix) {
-		prefix := errMsg[:len(errMsg)-len(causeSuffix)]
-		if len(prefix) == 0 {
-			return "", Prefix
-		}
-		if strings.HasSuffix(prefix, ": ") {
-			return prefix[:len(prefix)-2], Prefix
-		}
-	}
-	return errMsg, FullMessage
 }

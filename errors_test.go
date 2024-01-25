@@ -9,16 +9,18 @@ import (
 )
 
 var (
-	errFmt     = fmt.Errorf("fmtErr")
-	errLeafNew = errors.New("leafErr")
+	errFmt     = fmt.Errorf("fmtErr\nwith\nnew line")
+	errLeafNew = errors.New("leafErr\nhas\nnew line")
 )
 
 func print(t *testing.T, err error) {
 	t.Helper()
+	t.Logf("Error(): %s", err.Error())
 	t.Logf("verb= v: %v", err)
 	t.Logf("verb=+v: %+v", err)
+	t.Logf("verb=#v: %#v", err)
 	t.Logf("verb= q: %q", err)
-
+	t.Logf("verb= a: %a", err)
 }
 
 func TestNew(t *testing.T) {
@@ -42,6 +44,7 @@ type onlyJoin struct {
 func newJoin(errs ...error) error {
 	return &onlyJoin{errs: errs}
 }
+
 func (e *onlyJoin) Error() string {
 	var sb strings.Builder
 	for i, err := range e.errs {
@@ -52,6 +55,7 @@ func (e *onlyJoin) Error() string {
 	}
 	return sb.String()
 }
+
 func (e *onlyJoin) Unwrap() []error {
 	return e.errs
 }
@@ -63,15 +67,14 @@ func TestCause(t *testing.T) {
 	c := errors.Cause(err2)
 	// errLeafNew: withStack{leafError, stack}
 	typ := fmt.Sprintf("%T", c)
-	if typ != "*errors.leafError" {
+	if typ != "*errors.errorString" {
 		t.Errorf("cause failed: %v", typ)
 	}
 
 	c = errors.Unwrap(err2)
-	// Errorf: withStack{fmt.Errorf, stack}
-	// fmt.Errorf: fmt.wrapError
+	// Errorf: withStack{withPrefix/withNewMessage, stack}
 	typ = fmt.Sprintf("%T", c)
-	if typ != "*errors.withNewMessage" {
+	if typ != "*errors.withPrefix" {
 		t.Errorf("Unwrap failed: %v", typ)
 	}
 	c = errors.Unwrap(c)
@@ -98,8 +101,17 @@ func TestWithSecondary(t *testing.T) {
 }
 
 func TestWrap(t *testing.T) {
-	print(t, errors.Wrap(errFmt, "prefix"))     // 添加堆栈
-	print(t, errors.Wrap(errLeafNew, "prefix")) // 重复堆栈会省略
+	print(t, errors.Wrap(errFmt, "prefix")) // 添加堆栈
+	err := errors.New("new")
+	print(t, errors.Wrap(err, "prefix")) // 重复堆栈会省略
+}
+
+func TestElideStack(t *testing.T) {
+	err1 := errors.New("err1")
+	t.Logf("%+v", errors.Wrapf(err1, "err1Prefix"))
+	err2 := errors.New("err2")
+	errJoin := errors.Join(err1, err2)
+	print(t, errJoin)
 }
 
 func TestWrapf(t *testing.T) {
