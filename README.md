@@ -1,4 +1,6 @@
 # errors
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpub-go%2Ferrors.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpub-go%2Ferrors?ref=badge_shield)
+
 errors with stack, supports multi-cause error format as tree, 
 inspired by [cockroachdb/errors](github.com/cockroachdb/errors)
 
@@ -98,3 +100,6 @@ Next: (4) err-std
     └─ line
 Error types: (1) *errors.withStack (2) *errors.withPrefix (3) *errors.withStack (4) *errors.joinError (5) *errors.errorString (6) *errors.fundamental (7) *withstack.withStack (8) *errutil.leafError (9) *errors.withStack (10) *errors.errorString
 ```
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpub-go%2Ferrors.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpub-go%2Ferrors?ref=badge_large)
