@@ -2,6 +2,8 @@
 errors with stack, supports multi-cause error format as tree, 
 inspired by [cockroachdb/errors](github.com/cockroachdb/errors)
 
+> 博客：[造一个 Go 语言错误库的轮子](https://youthlin.com/?p=1868)
+
 Example
 ```go
 package main
