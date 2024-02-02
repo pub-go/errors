@@ -27,6 +27,11 @@ func Formattable(err error) FormattableError {
 	return &errorFormatter{err}
 }
 
+// Detail 先将 err 包装为 Formattable 再使用 %+v 格式化为字符串
+func Detail(err error) string {
+	return fmt.Sprintf("%+v", Formattable(err))
+}
+
 // FormatError 能够识别格式化动词智能打印。
 // 当一个错误类型在实现 fmt.Formatter 接口时，可以直接转发给本函数。
 //

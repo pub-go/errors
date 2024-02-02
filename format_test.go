@@ -16,3 +16,10 @@ func TestFormat(t *testing.T) {
 	err1234 := errors.Join(err12, err34)
 	t.Logf("%+v", err1234)
 }
+
+func TestDetail(t *testing.T) {
+	if s := errors.Detail(nil); s != "<nil>" {
+		t.Errorf("Detail(nil) got %s", s)
+	}
+	t.Logf("%s", errors.Detail(errors.New("error")))
+}
