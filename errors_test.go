@@ -125,6 +125,12 @@ func TestWithStack(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
+	if err := errors.Join(); err != nil {
+		t.Errorf("Join() want nil, got: %+v", err)
+	}
+	if err := errors.Join(nil); err != nil {
+		t.Errorf("Join(nil) want nil, got: %+v", err)
+	}
 	print(t, errors.Join(errFmt, errLeafNew))
 }
 

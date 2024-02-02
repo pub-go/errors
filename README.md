@@ -1,8 +1,17 @@
 # errors
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpub-go%2Ferrors.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpub-go%2Ferrors?ref=badge_shield)
+
 
 errors with stack, supports multi-cause error format as tree, 
 inspired by [cockroachdb/errors](github.com/cockroachdb/errors)
+
+> 博客：[造一个 Go 语言错误库的轮子](https://youthlin.com/?p=1868)
+
+[![sync-to-gitee](https://github.com/pub-go/errors/actions/workflows/gitee.yaml/badge.svg)](https://github.com/pub-go/errors/actions/workflows/gitee.yaml)
+[![test](https://github.com/pub-go/errors/actions/workflows/test.yaml/badge.svg)](https://github.com/pub-go/errors/actions/workflows/test.yaml)
+[![codecov](https://codecov.io/gh/pub-go/errors/graph/badge.svg?token=OfZF3kQlBS)](https://codecov.io/gh/pub-go/errors)
+[![Go Report Card](https://goreportcard.com/badge/code.gopub.tech/errors)](https://goreportcard.com/report/code.gopub.tech/errors)
+[![Go Reference](https://pkg.go.dev/badge/code.gopub.tech/errors.svg)](https://pkg.go.dev/code.gopub.tech/errors)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpub-go%2Ferrors.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpub-go%2Ferrors?ref=badge_shield)
 
 Example
 ```go

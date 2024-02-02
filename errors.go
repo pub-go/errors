@@ -176,9 +176,14 @@ func WithStack(err error) error {
 	}
 }
 
+// Join 聚合多个错误
 func Join(errs ...error) error {
+	err := join(errs...)
+	if err == nil {
+		return nil
+	}
 	return &withStack{
-		error: join(errs...),
+		error: err,
 		stack: callers(),
 	}
 }
