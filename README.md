@@ -86,7 +86,7 @@ Next: (4) err-std
  │  │  code.gopub.tech/example.TestErrors
  │  │  	/go/src/code.gopub.tech/example/main_test.go:16
  │  └─ [...repeated from below...]
- ├─ Wraps: (7)
+ ├─ Wraps: (7) attached stack trace
  │  │ -- stack trace:
  │  │ code.gopub.tech/example.TestErrors
  │  │ 	/go/src/code.gopub.tech/example/main_test.go:17
@@ -94,18 +94,17 @@ Next: (4) err-std
  │ Next: (8) err-cdb
  │  │  new
  │  └─ line
- └─ Wraps: (9) attached stack trace
-    │ -- stack trace:
-    │ code.gopub.tech/example.TestErrors
-    │ 	/go/src/code.gopub.tech/example/main_test.go:18
-    │ testing.tRunner
-    │ 	/sdk/go1.21.6/src/testing/testing.go:1595
-    │ runtime.goexit
-    │ 	/sdk/go1.21.6/src/runtime/asm_amd64.s:1650
-   Next: (10) err-this
+ └─ Wraps: (9) err-this
     │  new
-    └─ line
-Error types: (1) *errors.withStack (2) *errors.withPrefix (3) *errors.withStack (4) *errors.joinError (5) *errors.errorString (6) *errors.fundamental (7) *withstack.withStack (8) *errutil.leafError (9) *errors.withStack (10) *errors.errorString
+    │  line
+    │  -- stack trace:
+    │  code.gopub.tech/example.TestErrors
+    │  	/go/src/code.gopub.tech/example/main_test.go:18
+    │  testing.tRunner
+    │  	/sdk/go1.21.6/src/testing/testing.go:1595
+    │  runtime.goexit
+    └─ 	/sdk/go1.21.6/src/runtime/asm_amd64.s:1650
+Error types: (1) *errors.withStack (2) *errors.withPrefix (3) *errors.withStack (4) *errors.joinError (5) *errors.errorString (6) *errors.fundamental (7) *withstack.withStack (8) *errutil.leafError (9) *errors.fundamental
 ```
 
 ## License
