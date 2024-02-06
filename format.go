@@ -244,7 +244,7 @@ func (s *state) printErrorString() {
 // print 格式化输出每个错误节点
 func (s *state) print(depth int, entry *formatEntry, prefix string, errType map[int]string) {
 	index := len(errType) + 1 // 计数
-	errType[index] = fmt.Sprintf("%T", entry.err)
+	errType[index] = reflect.TypeOf(entry.err).String()
 
 	if index == 1 { // 第一个特殊处理 不需要竖线开头
 		fmt.Fprintf(&s.finalBuf, "\n(1)")
@@ -333,8 +333,14 @@ func (s *state) printOne(prefix string, entry *formatEntry) {
 		}
 	}
 
+	tmp := sb.String()
+	if tmp == "" {
+		s.finalBuf.WriteString(" " + reflect.TypeOf(entry.err).String())
+		return
+	}
+
 	// 替换换行符号后再实际输出
-	str := replacePrefix(sb.String(), prefix, len(entry.wraps) == 0)
+	str := replacePrefix(tmp, prefix, len(entry.wraps) == 0)
 	s.finalBuf.WriteString(str)
 }
 
@@ -417,7 +423,7 @@ type formatEntry struct {
 
 // String is used for debugging only.
 func (e formatEntry) String() string {
-	return fmt.Sprintf("entry{%T,%v, %q, %q}", e.err, e.elidedStackTrace, e.simple, e.detail)
+	return fmt.Sprintf("entry{%T, %v, %q, %q}", e.err, e.elidedStackTrace, e.simple, e.detail)
 }
 
 // Write implements fmt.State.

@@ -36,3 +36,19 @@ func TestDetail(t *testing.T) {
 		}
 	}
 }
+
+type Err struct {
+	err error
+	foo string
+}
+
+func newErr(err error) error { return &Err{err: err, foo: "foo"} }
+func (e *Err) Error() string { return e.err.Error() }
+func (e *Err) Unwrap() error { return e.err }
+
+func TestEmpty(t *testing.T) {
+	err := errors.Errorf("newErr")
+	err = newErr(err)
+	t.Logf("err=%+v", errors.F(err))
+	t.Logf("err=%+v", errors.Wrapf(err, "prefix"))
+}
