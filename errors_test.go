@@ -28,13 +28,15 @@ func TestNew(t *testing.T) {
 }
 
 func TestErrorf(t *testing.T) {
-	err := errors.Errorf("arg=%v", errLeafNew)
+	err := errors.Errorf("arg=%v", 1)
+	print(t, err)
+	err = errors.Errorf("arg=%v", errLeafNew)
 	print(t, err)
 	err = errors.Errorf("wrap1: %w", errLeafNew)
 	print(t, err)
 	err = errors.Errorf("wrap2: %w, %w", errLeafNew, errFmt)
 	print(t, err)
-	print(t, errors.Formattable(newJoin(errFmt, errLeafNew)))
+	print(t, errors.F(newJoin(errFmt, errLeafNew)))
 }
 
 type onlyJoin struct {
@@ -65,9 +67,9 @@ func TestCause(t *testing.T) {
 	err2 := errors.Errorf("wrap: %w", err)
 
 	c := errors.Cause(err2)
-	// errLeafNew: withStack{leafError, stack}
+	// errLeafNew: fundamental{string, stack}
 	typ := fmt.Sprintf("%T", c)
-	if typ != "*errors.errorString" {
+	if typ != "*errors.fundamental" {
 		t.Errorf("cause failed: %v", typ)
 	}
 

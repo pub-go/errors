@@ -326,6 +326,9 @@ func (s *state) printOne(prefix string, entry *formatEntry) {
 		sb.Write(entry.detail)
 	}
 	if entry.stackTrace != nil {
+		if sb.String() == "" {
+			sb.WriteString(" attached stack trace")
+		}
 		sb.WriteString("\n-- stack trace:")
 		sb.WriteString(StackDetail(entry.stackTrace))
 		if entry.elidedStackTrace {

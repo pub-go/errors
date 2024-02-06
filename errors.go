@@ -8,16 +8,34 @@ import (
 
 // New 新建一个错误实例，带堆栈
 func New(msg string) error {
-	return &withStack{
-		error: errors.New(msg),
-		stack: callers(),
+	// 使用 fundamental 而不是 withStack
+	// 打印时直接输出 msg + stacktrace
+	// 而不用先输出 stacktrace 再输出 Next error
+	return &fundamental{
+		string: msg,
+		stack:  callers(),
 	}
 }
 
 // Errorf 按指定格式新建一个错误实例，带堆栈
 func Errorf(format string, args ...any) error {
-	// 先使用内置 fmt.Errorf 创建错误
-	fmtErr := fmt.Errorf(formatPlusW(format), args...)
+	format = formatPlusW(format) // 绕过编译检查(只有内置函数可以用 %w)
+	var hasRef bool
+	for _, arg := range args {
+		if _, ok := arg.(error); ok {
+			hasRef = true
+			break
+		}
+	}
+	if !hasRef { // 参数无 error 直接格式化即可
+		return &fundamental{
+			string: fmt.Sprintf(format, args...),
+			stack:  callers(),
+		}
+	}
+
+	// 先使用内置 fmt.Errorf 创建错误(复用 %w 格式化动词, 如有)
+	fmtErr := fmt.Errorf(format, args...)
 
 	var wrapedErr error // 如果当前 Go 版本支持 %w 记录一下
 	if we, ok := fmtErr.(interface{ Unwrap() error }); ok {
@@ -50,9 +68,9 @@ func Errorf(format string, args ...any) error {
 			// 如果仅仅是添加了前缀 就使用 withPrefix
 			// 这样在 %+v 格式输出时，就不会重复输出 causeMsg
 			// prefix: %w
-			// prefix: %w\n%w
 			prefix := errMsg[:len(errMsg)-len(causeMsg)]
-			prefix = strings.TrimSuffix(prefix, ": ")
+			prefix = strings.TrimSuffix(prefix, " ")
+			prefix = strings.TrimSuffix(prefix, ":")
 			err = &withPrefix{
 				error:  wrapedErr,
 				string: prefix,
